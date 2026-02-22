@@ -1312,6 +1312,7 @@ class RobotControlApp(QMainWindow):
 
         # Populate views
         self._load_file_tree()
+        self._load_simple_view_from_movement_py()
 
         # Auto-save timer (every 5 seconds)
         self._autosave_timer = QTimer(self)
@@ -1694,6 +1695,13 @@ class RobotControlApp(QMainWindow):
     def _load_simple_view_from_movement_py(self):
         """Read movement.py markers and rebuild Simple View with current params + saved logic."""
         if not os.path.isfile(MOVEMENT_PY):
+            # No movement.py — populate with generated default if editor is empty
+            if not self.simple_editor.toPlainText().strip():
+                self._syncing = True
+                try:
+                    self.simple_editor.setPlainText(self._generate_simple_code())
+                finally:
+                    self._syncing = False
             return
         with open(MOVEMENT_PY, 'r') as f:
             code = f.read()
