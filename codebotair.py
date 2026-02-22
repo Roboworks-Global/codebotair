@@ -1512,7 +1512,7 @@ class RobotControlApp(QMainWindow):
     # --- Simple View helpers ---
 
     def _generate_simple_code(self):
-        """Generate simplified ROS2-style code from current parameter values."""
+        """Generate Codebot Air default code from current parameter values."""
         fwd = self.forward_speed.value()
         bwd = self.backward_speed.value()
         turn = self.turn_speed.value()
@@ -1522,12 +1522,11 @@ class RobotControlApp(QMainWindow):
         colour = self.colour_detection.currentText()
 
         return (
-            f'import rclpy\n'
-            f'from rclpy.node import Node\n'
+            f'from codebotair import Robot\n'
             f'\n'
-            f'class Movement(Node):\n'
+            f'class Movement(Robot):\n'
             f'    def __init__(self):\n'
-            f'        super().__init__(\'movement\')\n'
+            f'        super().__init__()\n'
             f'        # === Editable Parameters ===\n'
             f'        self.forward_speed = {fwd:.2f}       # m/s  \u2190 edit\n'
             f'        self.backward_speed = {bwd:.2f}      # m/s  \u2190 edit\n'
