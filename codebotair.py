@@ -59,6 +59,9 @@ _FULL_VIEW_FILES = [
 _PROTECTED_FV_FOLDERS = {"roboapps"}
 _PROTECTED_FV_FILES = {"codebotair.py"}
 
+# Path to movement.py (retained for editor compatibility; may not exist in Codebot Air)
+MOVEMENT_PY = os.path.join(_PKG_DIR, "movement_pkg", "movement.py")
+
 # Code snippets for drag-and-drop in Simple View (8-space indent for __init__ body)
 _SIMPLE_VIEW_SNIPPETS = {
     # Control
@@ -1631,6 +1634,8 @@ class RobotControlApp(QMainWindow):
 
     def _generate_simple_code(self):
         """Generate simplified ROS2-style code from current parameter values."""
+        if not hasattr(self, 'forward_speed'):
+            return "# Simple View code will appear here.\n"
         fwd = self.forward_speed.value()
         bwd = self.backward_speed.value()
         turn = self.turn_speed.value()
@@ -1670,6 +1675,8 @@ class RobotControlApp(QMainWindow):
         """Parse Simple View text and update spinboxes in Robot Control tab."""
         if self._syncing:
             return
+        if not hasattr(self, 'forward_speed'):
+            return
         self._syncing = True
         try:
             text = self.simple_editor.toPlainText()
@@ -1702,6 +1709,8 @@ class RobotControlApp(QMainWindow):
     def _sync_simple_view_from_spinboxes(self):
         """Update Simple View parameter values in-place (preserves user logic)."""
         if self._syncing:
+            return
+        if not hasattr(self, 'forward_speed'):
             return
         self._syncing = True
         try:
@@ -2036,12 +2045,7 @@ class RobotControlApp(QMainWindow):
                 if os.path.isfile(fpath):
                     _add_file(parent, fname, os.path.join(entry, fname))
 
-        # 3) Canvas-only packages that have no directory yet
-        for pkg_name in (self._canvas_state.packages or {}):
-            if pkg_name not in folders:
-                _ensure_folder(pkg_name)
-
-        # 4) Root-level files not in _FULL_VIEW_FILES
+        # 3) Root-level files not in _FULL_VIEW_FILES
         for entry in sorted(os.listdir(_PKG_DIR)):
             entry_path = os.path.join(_PKG_DIR, entry)
             if os.path.isfile(entry_path) and not entry.startswith("."):
@@ -2078,13 +2082,6 @@ class RobotControlApp(QMainWindow):
                 folder_path = os.path.join(_PKG_DIR, folder_display)
                 if os.path.isdir(folder_path):
                     shutil.rmtree(folder_path)
-                # Remove matching package and items from canvas
-                self._canvas_state.packages.pop(folder_display, None)
-                to_remove = [iid for iid, it
-                             in self._canvas_state.items.items()
-                             if it.package == folder_display]
-                for iid in to_remove:
-                    self._canvas_state.remove_item(iid)
             else:
                 full_path = os.path.join(_PKG_DIR, rel_path)
                 if os.path.isfile(full_path):
@@ -2092,17 +2089,7 @@ class RobotControlApp(QMainWindow):
                 if self._full_view_current_file == rel_path:
                     self._full_view_current_file = None
                     self.full_editor.clear()
-                # Remove matching node/topic from canvas
-                file_name = os.path.splitext(os.path.basename(rel_path))[0]
-                pkg_name = os.path.dirname(rel_path)
-                for iid, it in list(self._canvas_state.items.items()):
-                    if it.package == pkg_name and it.name == file_name:
-                        self._canvas_state.remove_item(iid)
-                        break
-            self._canvas_push_undo()
-            self._populate_canvas_file_tree()
             self._load_file_tree()
-            self.canvas_widget.update()
             return
 
         rel_path = item.data(0, Qt.ItemDataRole.UserRole)
@@ -2155,6 +2142,220 @@ class RobotControlApp(QMainWindow):
                     and self._full_view_current_file.endswith("movement.py")):
                 self._load_params()
         self.deploy()
+
+    # --- Full View delete mode ---
+
+    def _fv_toggle_delete_mode(self):
+        self._fv_edit_mode = not self._fv_edit_mode
+        self.fv_delete_btn.setChecked(self._fv_edit_mode)
+        self._load_file_tree()
+
+    def _fv_add_menu(self):
+        """+ button dialog: Add Package / Add File / Cancel."""
+        items = ["Add Package", "Add File", "Cancel"]
+        choice, ok = QInputDialog.getItem(
+            self, "Add to Full View", "What would you like to add?",
+            items, 0, False)
+        if not ok or choice == "Cancel":
+            return
+        if choice == "Add Package":
+            name, ok = QInputDialog.getText(
+                self, "New Package", "Package folder name:")
+            if ok and name.strip():
+                pkg_dir = os.path.join(_PKG_DIR, name.strip())
+                os.makedirs(pkg_dir, exist_ok=True)
+                self._load_file_tree()
+        elif choice == "Add File":
+            disk_folders = set(
+                d for d in os.listdir(_PKG_DIR)
+                if os.path.isdir(os.path.join(_PKG_DIR, d))
+                and not d.startswith(".") and not d.startswith("__")
+                and not any(d.endswith(h) or d == h
+                            for h in self._FV_HIDDEN_DIRS)
+            )
+            pkg_folders = sorted(disk_folders)
+            if not pkg_folders:
+                QMessageBox.information(
+                    self, "No Package",
+                    "Create a package folder first.")
+                return
+            folder, ok = QInputDialog.getItem(
+                self, "Select Package",
+                "Add the file to which package folder?",
+                pkg_folders, 0, False)
+            if not ok:
+                return
+            name, ok2 = QInputDialog.getText(
+                self, "New File", "File name (e.g. my_sketch.ino):")
+            if ok2 and name.strip():
+                folder_path = os.path.join(_PKG_DIR, folder)
+                os.makedirs(folder_path, exist_ok=True)
+                fpath = os.path.join(folder_path, name.strip())
+                if not os.path.exists(fpath):
+                    with open(fpath, "w") as f:
+                        f.write("")
+                self._load_file_tree()
+
+    def _fv_tree_item_changed(self, item, column):
+        """No-op — Full View tree is not inline-editable."""
+        return
+
+    def _fv_tree_double_clicked(self, item, column):
+        """Double-click to rename a file or folder in the Full View tree."""
+        rel_path = item.data(0, Qt.ItemDataRole.UserRole)
+        is_folder = rel_path is None
+        if is_folder:
+            type_label = "folder"
+            display = item.text(0).strip()
+            for prefix in ("\U0001F4C1 ", "\U0001F4C1"):
+                if display.startswith(prefix):
+                    display = display[len(prefix):]
+                    break
+            old_name = display
+        else:
+            type_label = "file"
+            old_name = os.path.basename(rel_path)
+        reply = QMessageBox.question(
+            self, "Rename",
+            f"Would you like to change the name of this {type_label}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, f"Rename {type_label}", "New name:", text=old_name)
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+        new_name = new_name.strip()
+        if is_folder:
+            old_path = os.path.join(_PKG_DIR, old_name)
+            new_path = os.path.join(_PKG_DIR, new_name)
+            if os.path.isdir(old_path):
+                try:
+                    os.rename(old_path, new_path)
+                except Exception as e:
+                    QMessageBox.warning(self, "Rename failed", str(e))
+                    return
+            if (self._full_view_current_file
+                    and self._full_view_current_file.startswith(old_name + "/")):
+                self._full_view_current_file = (
+                    new_name + self._full_view_current_file[len(old_name):])
+        else:
+            old_path = os.path.join(_PKG_DIR, rel_path)
+            new_rel = os.path.join(os.path.dirname(rel_path), new_name)
+            new_path = os.path.join(_PKG_DIR, new_rel)
+            try:
+                os.rename(old_path, new_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Rename failed", str(e))
+                return
+            if self._full_view_current_file == rel_path:
+                self._full_view_current_file = new_rel
+        self._load_file_tree()
+
+    def _save_from_editor(self):
+        """Save triggered from Code Editor tab."""
+        if self.editor_stack.currentIndex() == 0:
+            self._write_params_to_movement_py()
+            self._write_simple_logic_to_movement_py()
+        else:
+            self._save_full_view_file()
+        self._log("Saved to project folder.")
+        self._flash_save_buttons()
+
+    def deploy(self):
+        """Deploy: compile and upload the sketch to Codebot Air."""
+        self._run_code()
+
+    def _load_params(self):
+        """No-op stub — Codebot Air has no ROS movement params to load."""
+        pass
+
+    def _populate_canvas_file_tree(self):
+        """No-op stub — Codebot Air has no Node Canvas."""
+        pass
+
+    def _run_worker(self, worker):
+        """No-op stub — Codebot Air has no SSH workers."""
+        pass
+
+    def _flash_save_buttons(self):
+        """Briefly flash the Save button green to confirm save."""
+        if hasattr(self, 'editor_save_btn'):
+            self.editor_save_btn.setText("Saved!")
+            QTimer.singleShot(1000, lambda: self.editor_save_btn.setText("Save"))
+
+    def _flash_deploy_buttons(self):
+        """Briefly flash the Deploy button to confirm deploy."""
+        if hasattr(self, 'editor_deploy_btn'):
+            self.editor_deploy_btn.setText("Uploaded!")
+            QTimer.singleShot(1500, lambda: self.editor_deploy_btn.setText("Deploy"))
+
+    def check_launch_logs(self):
+        """Show recent git activity in the log."""
+        self._log("--- Git Activity ---")
+        r = subprocess.run(
+            ["git", "log", "--oneline", "-5"],
+            cwd=_PKG_DIR, capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            for line in r.stdout.strip().splitlines():
+                self._log(f"  {line}")
+        else:
+            self._log("  No commits yet" + (
+                f": {r.stderr.strip()}" if r.stderr.strip() else ""))
+        r = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=_PKG_DIR, capture_output=True, text=True)
+        if r.returncode == 0:
+            status_out = r.stdout.strip()
+            self._log(f"  git status: "
+                      f"{status_out if status_out else 'clean (nothing to commit)'}")
+        else:
+            self._log(f"  git status error: {r.stderr.strip()}")
+
+    def _find_conda_env(self):
+        """Locate the conda 'ros_env' environment.
+
+        Returns (conda_prefix, error_message). On success error_message is None.
+        """
+        conda_exe = shutil.which("conda")
+        if conda_exe is None:
+            candidates = [
+                os.path.expanduser("~/miniforge3/condabin/conda"),
+                os.path.expanduser("~/miniforge3/bin/conda"),
+                os.path.expanduser("~/miniconda3/condabin/conda"),
+                os.path.expanduser("~/miniconda3/bin/conda"),
+                os.path.expanduser("~/anaconda3/condabin/conda"),
+                os.path.expanduser("~/anaconda3/bin/conda"),
+                "/opt/homebrew/Caskroom/miniforge/base/condabin/conda",
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    conda_exe = c
+                    break
+        if conda_exe is None:
+            return None, (
+                "Conda not found.\n\n"
+                "Please install Miniforge first, then run:\n"
+                "  bash setup_robostack.sh\n\n"
+                "(from the project directory)"
+            )
+        try:
+            result = subprocess.run(
+                [conda_exe, "env", "list", "--json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            envs = json.loads(result.stdout).get("envs", [])
+            for env_path in envs:
+                if env_path.endswith("/ros_env"):
+                    return env_path, None
+        except Exception as e:
+            return None, f"Error querying conda environments: {e}"
+        return None, (
+            "Conda environment 'ros_env' not found.\n\n"
+            "Run this in Terminal:\n"
+            "  bash setup_robostack.sh\n\n"
+            "(from the project directory)"
+        )
 
     # ------------------------------------------------------------------ #
     #  Shared logic                                                        #
