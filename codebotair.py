@@ -980,6 +980,98 @@ class RobotControlApp(QMainWindow):
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
 
+        # --- Parameters group ---
+        param_group = QGroupBox("Parameters")
+        param_layout = QGridLayout()
+
+        # Left column
+        param_layout.addWidget(QLabel("Forward Speed (m/s):"), 0, 0)
+        self.forward_speed = QDoubleSpinBox()
+        self.forward_speed.setRange(0.01, 2.0)
+        self.forward_speed.setSingleStep(0.05)
+        self.forward_speed.setDecimals(2)
+        self.forward_speed.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.forward_speed, 0, 1)
+
+        param_layout.addWidget(QLabel("Backward Speed (m/s):"), 1, 0)
+        self.backward_speed = QDoubleSpinBox()
+        self.backward_speed.setRange(0.01, 2.0)
+        self.backward_speed.setSingleStep(0.05)
+        self.backward_speed.setDecimals(2)
+        self.backward_speed.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.backward_speed, 1, 1)
+
+        param_layout.addWidget(QLabel("Turn Speed (rad/s):"), 2, 0)
+        self.turn_speed = QDoubleSpinBox()
+        self.turn_speed.setRange(0.1, 3.0)
+        self.turn_speed.setSingleStep(0.1)
+        self.turn_speed.setDecimals(2)
+        self.turn_speed.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.turn_speed, 2, 1)
+
+        param_layout.addWidget(QLabel("Obstacle Distance (m):"), 3, 0)
+        self.obstacle_distance = QDoubleSpinBox()
+        self.obstacle_distance.setRange(0.10, 2.0)
+        self.obstacle_distance.setSingleStep(0.05)
+        self.obstacle_distance.setDecimals(2)
+        self.obstacle_distance.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.obstacle_distance, 3, 1)
+
+        # Right column
+        param_layout.addWidget(QLabel("Turn Clockwise (deg):"), 0, 2)
+        self.turn_cw = QDoubleSpinBox()
+        self.turn_cw.setRange(0, 360)
+        self.turn_cw.setSingleStep(5)
+        self.turn_cw.setDecimals(1)
+        self.turn_cw.setValue(90.0)
+        self.turn_cw.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.turn_cw, 0, 3)
+
+        param_layout.addWidget(QLabel("Turn Anti-Clockwise (deg):"), 1, 2)
+        self.turn_acw = QDoubleSpinBox()
+        self.turn_acw.setRange(0, 360)
+        self.turn_acw.setSingleStep(5)
+        self.turn_acw.setDecimals(1)
+        self.turn_acw.setValue(90.0)
+        self.turn_acw.valueChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.turn_acw, 1, 3)
+
+        param_layout.addWidget(QLabel("Colour Detection:"), 2, 2)
+        self.colour_detection = QComboBox()
+        self.colour_detection.addItems(["Red", "Blue", "Yellow", "Green"])
+        self.colour_detection.currentTextChanged.connect(self._sync_simple_view_from_spinboxes)
+        param_layout.addWidget(self.colour_detection, 2, 3)
+
+        _btn_row = QHBoxLayout()
+        _btn_row.setSpacing(8)
+        _btn_row.setContentsMargins(0, 0, 0, 0)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet(
+            "background-color: #34C759; color: white; padding: 8px; border-radius: 8px;"
+        )
+        self.save_btn.setMinimumWidth(100)
+        self.save_btn.clicked.connect(self.save)
+        _btn_row.addWidget(self.save_btn)
+
+        self.deploy_btn = QPushButton("Deploy")
+        self.deploy_btn.setStyleSheet(
+            "QPushButton { background-color: #007AFF; color: white; padding: 8px; border-radius: 8px; }"
+            "QPushButton:disabled { background-color: #B0B0B0; color: #707070; border-radius: 8px; }"
+        )
+        self.deploy_btn.setMinimumWidth(100)
+        self.deploy_btn.clicked.connect(self.deploy)
+        self.deploy_btn.setEnabled(False)
+        _btn_row.addWidget(self.deploy_btn)
+
+        _btn_row.addStretch()
+        _btn_container = QWidget()
+        _btn_container.setLayout(_btn_row)
+        param_layout.addWidget(_btn_container, 4, 0, 1, 4)
+
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
+
         # --- Log area ---
         log_group = QGroupBox("Log Output")
         log_layout = QVBoxLayout()
@@ -1421,8 +1513,6 @@ class RobotControlApp(QMainWindow):
 
     def _generate_simple_code(self):
         """Generate simplified ROS2-style code from current parameter values."""
-        if not hasattr(self, 'forward_speed'):
-            return "# Simple View code will appear here.\n"
         fwd = self.forward_speed.value()
         bwd = self.backward_speed.value()
         turn = self.turn_speed.value()
@@ -1462,8 +1552,6 @@ class RobotControlApp(QMainWindow):
         """Parse Simple View text and update spinboxes in Robot Control tab."""
         if self._syncing:
             return
-        if not hasattr(self, 'forward_speed'):
-            return
         self._syncing = True
         try:
             text = self.simple_editor.toPlainText()
@@ -1496,8 +1584,6 @@ class RobotControlApp(QMainWindow):
     def _sync_simple_view_from_spinboxes(self):
         """Update Simple View parameter values in-place (preserves user logic)."""
         if self._syncing:
-            return
-        if not hasattr(self, 'forward_speed'):
             return
         self._syncing = True
         try:
@@ -2039,6 +2125,13 @@ class RobotControlApp(QMainWindow):
                 self._full_view_current_file = new_rel
         self._load_file_tree()
 
+    def save(self):
+        """Save current parameter values to the Simple View editor."""
+        self._write_params_to_movement_py()
+        self._write_simple_logic_to_movement_py()
+        self._log("Saved to project folder.")
+        self._flash_save_buttons()
+
     def _save_from_editor(self):
         """Save triggered from Code Editor tab."""
         if self.editor_stack.currentIndex() == 0:
@@ -2189,6 +2282,8 @@ class RobotControlApp(QMainWindow):
             self.conn_status.setStyleSheet("color: #FF3B30; font-weight: bold; padding-left: 8px;")
             self.run_btn.setEnabled(False)
             self.stop_btn.setEnabled(False)
+            self.deploy_btn.setEnabled(False)
+            self.editor_deploy_btn.setEnabled(False)
             self._log("USB: Disconnected.")
             return
 
@@ -2208,6 +2303,8 @@ class RobotControlApp(QMainWindow):
             self.conn_status.setStyleSheet("color: #34C759; font-weight: bold; padding-left: 8px;")
             self.run_btn.setEnabled(True)
             self.stop_btn.setEnabled(True)
+            self.deploy_btn.setEnabled(True)
+            self.editor_deploy_btn.setEnabled(True)
             self._log(f"USB: Connected to {port} at {CODEBOT_BAUD} baud.")
         except Exception as e:
             QMessageBox.critical(self, "Connection Failed", str(e))
