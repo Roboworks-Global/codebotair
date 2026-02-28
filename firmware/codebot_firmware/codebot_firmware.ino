@@ -2,7 +2,7 @@
 // Motor driver: L298N dual H-bridge
 // Board: Arduino UNO (ATmega328P, CH340)
 //
-// Serial commands (9600 baud):
+// Serial commands (115200 baud):
 //   F = forward    B = backward
 //   L = turn left  R = turn right
 //   S = stop
@@ -22,7 +22,7 @@ int motorSpeed = 180;
 
 // ------------------------------------
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
   pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
   stopMotors();
