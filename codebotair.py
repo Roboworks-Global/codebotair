@@ -44,8 +44,10 @@ except ImportError:
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _GIT_CREDS_FILE = os.path.join(_PKG_DIR, ".git_credentials.json")
 
-# Arduino-cli executable name (must be on PATH or full path)
-ARDUINO_CLI = "arduino-cli"
+# Arduino-cli executable — full path so it works when launched outside a terminal
+ARDUINO_CLI = os.path.expanduser("~/.local/bin/arduino-cli")
+# Board FQBN for Wheeltec MiniBalance Duino (ATmega328P, UNO-compatible, CH340)
+CODEBOT_FQBN = "arduino:avr:uno"
 # Default baud rate for serial communication with Codebot Air
 CODEBOT_BAUD = 115200
 
@@ -860,6 +862,7 @@ class RobotControlApp(QMainWindow):
         self._workers = []
         self._serial_conn = None
         self._usb_port = None
+        self._known_ports = None  # None = first scan not yet done; skip auto-connect
         self._syncing = False
         self._full_view_current_file = None
         self._fv_edit_mode = False
@@ -2261,7 +2264,15 @@ class RobotControlApp(QMainWindow):
         """Scan for USB serial devices and update the port combo."""
         if not _SERIAL_AVAILABLE:
             return
-        ports = [p.device for p in serial.tools.list_ports.comports()]
+        all_port_infos = serial.tools.list_ports.comports()
+        ports = [p.device for p in all_port_infos]
+
+        # Detect newly plugged-in ports (skip auto-connect on the very first scan)
+        new_ports = []
+        if self._known_ports is not None:
+            new_ports = [p for p in ports if p not in self._known_ports]
+        self._known_ports = set(ports)
+
         current = self._port_combo.currentText()
         self._port_combo.blockSignals(True)
         self._port_combo.clear()
@@ -2273,6 +2284,37 @@ class RobotControlApp(QMainWindow):
         # Only enable Connect if not already connected
         if self._serial_conn is None or not self._serial_conn.is_open:
             self.connect_btn.setEnabled(has_ports)
+
+        # Auto-disconnect when the connected port disappears
+        if (self._serial_conn and self._serial_conn.is_open
+                and self._usb_port and self._usb_port not in ports):
+            try:
+                self._serial_conn.close()
+            except Exception:
+                pass
+            self._serial_conn = None
+            self._usb_port = None
+            self.connect_btn.setText("Connect")
+            self.conn_status.setText("Not connected")
+            self.conn_status.setStyleSheet("color: #FF3B30; font-weight: bold; padding-left: 8px;")
+            self.run_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.deploy_btn.setEnabled(False)
+            self.editor_deploy_btn.setEnabled(False)
+            self._log("USB: Codebot Air disconnected.")
+
+        # Auto-connect when a new port appears and we are not already connected
+        if new_ports and (self._serial_conn is None or not self._serial_conn.is_open):
+            port_info_map = {p.device: p for p in all_port_infos}
+            # Prefer CH340 devices (Codebot Air uses the CH340 USB chip, VID 0x1A86)
+            ch340_new = [
+                p for p in new_ports
+                if 'CH340' in (port_info_map[p].description or '').upper()
+                or port_info_map[p].vid == 0x1A86
+            ]
+            auto_port = ch340_new[0] if ch340_new else new_ports[0]
+            self._port_combo.setCurrentText(auto_port)
+            self._do_usb_connect()
 
     def _do_usb_connect(self):
         """Connect to or disconnect from the selected USB port."""
@@ -2331,7 +2373,7 @@ class RobotControlApp(QMainWindow):
         self._log(f"Run: compiling and uploading sketch to {port}...")
         try:
             proc = subprocess.Popen(
-                [ARDUINO_CLI, "compile", "--upload", "-p", port, sketch_dir],
+                [ARDUINO_CLI, "compile", "--upload", "-p", port, "--fqbn", CODEBOT_FQBN, sketch_dir],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
             for line in proc.stdout:
