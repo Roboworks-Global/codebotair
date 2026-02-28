@@ -2260,17 +2260,27 @@ class RobotControlApp(QMainWindow):
     # USB connection
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_ch340(port_info):
+        """Return True if the port belongs to a CH340 USB-serial chip (Codebot Air)."""
+        return (
+            'CH340' in (port_info.description or '').upper()
+            or 'CH340' in (port_info.manufacturer or '').upper()
+            or port_info.vid == 0x1A86
+        )
+
     def _scan_usb_ports(self):
-        """Scan for USB serial devices and update the port combo."""
+        """Scan for CH340 USB serial devices and update the port combo."""
         if not _SERIAL_AVAILABLE:
             return
         all_port_infos = serial.tools.list_ports.comports()
-        ports = [p.device for p in all_port_infos]
+        # Only show CH340 ports (Codebot Air's USB chip) to avoid clutter
+        ch340_infos = [p for p in all_port_infos if self._is_ch340(p)]
+        ports = [p.device for p in ch340_infos]
 
-        # Detect newly plugged-in ports (skip auto-connect on the very first scan)
-        new_ports = []
-        if self._known_ports is not None:
-            new_ports = [p for p in ports if p not in self._known_ports]
+        first_scan = self._known_ports is None
+        # Detect newly plugged-in ports
+        new_ports = [] if first_scan else [p for p in ports if p not in self._known_ports]
         self._known_ports = set(ports)
 
         current = self._port_combo.currentText()
@@ -2303,17 +2313,10 @@ class RobotControlApp(QMainWindow):
             self.editor_deploy_btn.setEnabled(False)
             self._log("USB: Codebot Air disconnected.")
 
-        # Auto-connect when a new port appears and we are not already connected
-        if new_ports and (self._serial_conn is None or not self._serial_conn.is_open):
-            port_info_map = {p.device: p for p in all_port_infos}
-            # Prefer CH340 devices (Codebot Air uses the CH340 USB chip, VID 0x1A86)
-            ch340_new = [
-                p for p in new_ports
-                if 'CH340' in (port_info_map[p].description or '').upper()
-                or port_info_map[p].vid == 0x1A86
-            ]
-            auto_port = ch340_new[0] if ch340_new else new_ports[0]
-            self._port_combo.setCurrentText(auto_port)
+        # Auto-connect when a CH340 port appears (including on first scan if already plugged in)
+        auto_candidates = ports if first_scan else new_ports
+        if auto_candidates and (self._serial_conn is None or not self._serial_conn.is_open):
+            self._port_combo.setCurrentText(auto_candidates[0])
             self._do_usb_connect()
 
     def _do_usb_connect(self):
